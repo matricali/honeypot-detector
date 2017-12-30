@@ -1,10 +1,10 @@
-# honeypot-detector v0.1.3
+# honeypot-detector v1.0.1
 
 ## Usage
 ```bash
 $ honeypot-detector -h
-honeypot-detector v0.1.0
-	usage: ./honeypot-detector [-l targets.lst] [-p port] [-t threads] [-vh] [target]
+honeypot-detector v1.0.1 - (c) 2017 Jorge Matricali
+usage: ./honeypot-detector [-l targets.lst] [-p port] [-j threads] [-t timeout] [-vh] [target]
 ```
 
 ```bash
@@ -13,7 +13,7 @@ $ honeypot-detector 192.168.0.26
 ```
 
 ```bash
-$ honeypot-detector -l targets.txt
+$ honeypot-detector -l targets.txt -j 4
 [+] 192.168.0.87:22 - SSH-2.0-OpenSSH_6.0p1 Debian-4+deb7u6
 [+] 192.168.0.8:22 - SSH-2.0-OpenSSH_7.2p2 Ubuntu-4ubuntu2.1
 [+] 192.168.0.52:22 - SSH-2.0-OpenSSH_6.6.1p1 Ubuntu-2ubuntu2.8

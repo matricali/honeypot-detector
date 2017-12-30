@@ -6,11 +6,14 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <pthread.h>
 
 #define BUF_SIZE 1024
-#define HONEYPOT_DETECTOR_VERSION "0.1.3"
+#define HONEYPOT_DETECTOR_VERSION "1.0.1"
 
 int g_verbose = 0;
+int g_timeout = 10;
+int g_port = 22;
 int MAX_THREADS = 1;
 
 void print_error(const char *format, ...)
@@ -52,7 +55,7 @@ int probe(char *serverAddr, unsigned int serverPort)
     print_debug("Socket created.");
 
     struct timeval timeout;
-    timeout.tv_sec = 10;
+    timeout.tv_sec = g_timeout;
     timeout.tv_usec = 0;
     setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout,
                 sizeof(timeout));
@@ -145,15 +148,29 @@ int probe(char *serverAddr, unsigned int serverPort)
     return 0;
 }
 
+void *runner(void *input_file)
+{
+    FILE *fp = input_file;
+    ssize_t read;
+    char *temp = 0;
+    size_t len;
+
+	while ((read = getline(&temp, &len, fp)) != -1) {
+        strtok(temp, "\n");
+        probe(temp, g_port);
+    }
+
+	pthread_exit(0);
+}
+
 int main(int argc, char **argv)
 {
     int opt = 0;
     int ret = 0;
-    unsigned int port = 22;
 
     char *hosts_filename = NULL;
 
-    while ((opt = getopt(argc, argv, "l:p:t:vh")) != -1) {
+    while ((opt = getopt(argc, argv, "l:p:j:t:vh")) != -1) {
         switch (opt) {
             case 'v':
                 g_verbose = 1;
@@ -162,24 +179,27 @@ int main(int argc, char **argv)
                 hosts_filename = optarg;
                 break;
             case 'p':
-                port = atoi(optarg);
+                g_port = atoi(optarg);
                 break;
-            case 't':
+            case 'j':
                 MAX_THREADS = atoi(optarg);
                 break;
+            case 't':
+                g_timeout = atoi(optarg);
+                break;
             case 'h':
-                printf("honeypot-detector v%s\n", HONEYPOT_DETECTOR_VERSION);
-                printf("\tusage: %s [-l targets.lst] [-p port] [-t threads] [-vh] [target]\n", argv[0]);
+                printf("honeypot-detector v%s - (c) 2017 Jorge Matricali\n", HONEYPOT_DETECTOR_VERSION);
+                printf("usage: %s [-l targets.lst] [-p port] [-j threads] [-t timeout] [-vh] [target]\n", argv[0]);
                 exit(EXIT_SUCCESS);
             default:
-                fprintf(stderr, "\tusage: %s [-l targets.lst] [-p port] [-t threads] [-vh] [target]\n", argv[0]);
+                fprintf(stderr, "\tusage: %s [-l targets.lst] [-p port] [-j threads] [-t timeout] [-vh] [target]\n", argv[0]);
                 exit(EXIT_FAILURE);
         }
     }
 
     if (hosts_filename == NULL) {
         if (optind < argc) {
-            ret = probe(argv[optind], port);
+            ret = probe(argv[optind], g_port);
             return ret;
         } else {
             print_error("No target specified.");
@@ -189,9 +209,6 @@ int main(int argc, char **argv)
 
     // Procesar lista de objetivos
     FILE *input = 0;
-    ssize_t read;
-    char *temp = 0;
-    size_t len;
 
     input = fopen(hosts_filename, "r");
     if (input == NULL) {
@@ -199,10 +216,18 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
-    for (int i = 0; (read = getline(&temp, &len, input)) != -1; i++) {
-        strtok(temp, "\n");
-        ret = probe(temp, port);
-    }
+    print_debug("Initializing %d threads...", MAX_THREADS);
+
+    pthread_t workers[MAX_THREADS];
+    for (int j = 0; j < MAX_THREADS; j++) {
+		pthread_create(&workers[j], NULL, runner, input);
+	}
+
+    /* Waiting for threads to complete */
+	for (int i = 0; i < MAX_THREADS; i++)
+	{
+	    pthread_join(workers[i], NULL);
+	}
 
     fclose(input);
 
