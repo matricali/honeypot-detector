@@ -8,19 +8,11 @@
 
 #define BUF_SIZE 1024
 
-int main(int argc, char **argv)
+int probe(char *serverAddr, unsigned int port)
 {
     struct sockaddr_in addr;
     int sockfd, ret;
     char buffer[BUF_SIZE];
-    char * serverAddr;
-
-    if (argc < 2) {
-        printf("usage: honeypot <ip address>\n");
-        exit(1);
-    }
-
-    serverAddr = argv[1];
 
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) {
@@ -40,7 +32,7 @@ int main(int argc, char **argv)
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = inet_addr(serverAddr);
-    addr.sin_port = htons(22);
+    addr.sin_port = htons(port);
 
     ret = connect(sockfd, (struct sockaddr *) &addr, sizeof(addr));
     if (ret < 0) {
@@ -123,18 +115,27 @@ int main(int argc, char **argv)
         printf("\t[!] %s - POSIBLE HONEYPOT!\n", serverAddr);
     }
 
-    // s.send("\n)
-    // s.send('asd\n      ')
-    // buffer = strdup("SSH-2.0-OpenSSH_7.5")
-    // while (fgets(buffer, BUF_SIZE, stdin) != NULL) {
-    //     ret = sendto(sockfd, buffer, BUF_SIZE, 0, (struct sockaddr *) &addr, sizeof(addr));
-    //     if (ret < 0) {
-    //         printf("Error sending data!\n\t-%s", buffer);
-    //     }
-    // }
-
     close(sockfd);
     sockfd = 0;
+
+    return 0;
+}
+
+int main(int argc, char **argv)
+{
+    int ret = 0;
+    unsigned int port = 22;
+
+    if (argc < 2) {
+        printf("usage: %s <ip address> [port]\n", argv[0]);
+        exit(EXIT_FAILURE);
+    }
+
+    if (argc >= 3) {
+        port = atoi(argv[2]);
+    }
+
+    ret = probe(argv[1], port);
 
     return 0;
 }
