@@ -6,7 +6,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include <pthread.h>
+#include <fcntl.h>
 
 #define BUF_SIZE 1024
 #define HONEYPOT_DETECTOR_VERSION "1.0.1"
@@ -14,7 +14,7 @@
 int g_verbose = 0;
 int g_timeout = 10;
 int g_port = 22;
-int MAX_THREADS = 1;
+int MAX_FORKS = 1;
 
 void print_error(const char *format, ...)
 {
@@ -45,6 +45,7 @@ int probe(char *serverAddr, unsigned int serverPort)
     int sockfd, ret;
     char buffer[BUF_SIZE];
     char *banner = NULL;
+    fd_set fdset;
 
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) {
@@ -52,6 +53,7 @@ int probe(char *serverAddr, unsigned int serverPort)
         sockfd = 0;
         return -1;
     }
+    fcntl(sockfd, F_SETFL, O_NONBLOCK);
     print_debug("Socket created.");
 
     struct timeval timeout;
@@ -69,12 +71,40 @@ int probe(char *serverAddr, unsigned int serverPort)
 
     print_debug("[-] %s:%d - Connecting...", serverAddr, serverPort);
     ret = connect(sockfd, (struct sockaddr *) &addr, sizeof(addr));
-    if (ret < 0) {
-        print_error("%s:%d - Error connecting to the server!", serverAddr, serverPort);
+
+    FD_ZERO(&fdset);
+    FD_SET(sockfd, &fdset);
+
+    if (select(sockfd + 1, NULL, &fdset, NULL, &timeout) == 1) {
+        int so_error;
+        socklen_t len = sizeof so_error;
+
+        getsockopt(sockfd, SOL_SOCKET, SO_ERROR, &so_error, &len);
+
+        if (so_error < 0) {
+            print_error("%s:%d - Error connecting to the server! (%s)", serverAddr, serverPort, strerror(so_error));
+            close(sockfd);
+            sockfd = 0;
+            return -1;
+        }
+    }
+
+    // Set to blocking mode again...
+    if ((ret = fcntl(sockfd, F_GETFL, NULL)) < 0) {
+        fprintf(stderr, "Error fcntl(..., F_GETFL) (%s)\n", strerror(ret));
         close(sockfd);
         sockfd = 0;
         return -1;
     }
+    long arg = 0;
+    arg &= (~O_NONBLOCK);
+    if ((ret = fcntl(sockfd, F_SETFL, arg)) < 0) {
+       fprintf(stderr, "Error fcntl(..., F_SETFL) (%s)\n", strerror(ret));
+       close(sockfd);
+       sockfd = 0;
+       return -1;
+    }
+
     print_debug("[+] %s:%d - Connected.", serverAddr, serverPort);
 
     memset(buffer, 0, BUF_SIZE);
@@ -148,21 +178,6 @@ int probe(char *serverAddr, unsigned int serverPort)
     return 0;
 }
 
-void *runner(void *input_file)
-{
-    FILE *fp = input_file;
-    ssize_t read;
-    char *temp = 0;
-    size_t len;
-
-	while ((read = getline(&temp, &len, fp)) != -1) {
-        strtok(temp, "\n");
-        probe(temp, g_port);
-    }
-
-	pthread_exit(0);
-}
-
 int main(int argc, char **argv)
 {
     int opt = 0;
@@ -182,7 +197,7 @@ int main(int argc, char **argv)
                 g_port = atoi(optarg);
                 break;
             case 'j':
-                MAX_THREADS = atoi(optarg);
+                MAX_FORKS = atoi(optarg);
                 break;
             case 't':
                 g_timeout = atoi(optarg);
@@ -216,20 +231,39 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
-    print_debug("Initializing %d threads...", MAX_THREADS);
+    print_debug("Initializing %d threads...", MAX_FORKS);
 
-    pthread_t workers[MAX_THREADS];
-    for (int j = 0; j < MAX_THREADS; j++) {
-		pthread_create(&workers[j], NULL, runner, input);
-	}
+    pid_t pid;
+    int p = 0;
 
-    /* Waiting for threads to complete */
-	for (int i = 0; i < MAX_THREADS; i++)
-	{
-	    pthread_join(workers[i], NULL);
-	}
+    ssize_t read;
+    char *temp = 0;
+    size_t len;
 
+    while ((read = getline(&temp, &len, input)) != -1) {
+        strtok(temp, "\n");
+
+        if (p >= MAX_FORKS){
+            waitpid(-1, NULL, 0);
+            p--;
+        }
+
+        pid = fork();
+
+        if (pid) {
+            // Parent process
+            p++;
+        } else if(pid == 0) {
+            // Child process
+            probe(temp, g_port);
+            exit(EXIT_SUCCESS);
+        } else {
+            print_error("Fork failed!\n");
+        }
+    }
+
+    pid = 0;
     fclose(input);
 
-    return 0;
+    return EXIT_SUCCESS;
 }
